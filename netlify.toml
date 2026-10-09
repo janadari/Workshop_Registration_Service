@@ -35,6 +35,12 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  # Netlify auto-installs its Next.js adapter (OpenNext) when it detects Next.js.
+  # For `output: "export"` the adapter only copies ./out into the publish
+  # directory, which is exactly what we do - see docs.opennext.js.org/netlify.
+  # Uncomment the line below if that adapter ever gets in the way: it makes the
+  # plugin exit immediately and Netlify publishes `out` verbatim.
+  # NETLIFY_NEXT_PLUGIN_SKIP = "true"
 
 # SPA-style fallback is NOT needed: `output: "export"` + `trailingSlash: true`
 # writes a real index.html for every route, and Next.js writes out/404.html,

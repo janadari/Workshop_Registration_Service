@@ -141,3 +141,13 @@ Common pitfalls that produce Netlify's "Page not found":
 - **Backend asleep / CORS** — Render free instances sleep; `backend/src/main.ts` currently calls
   `app.enableCors()` with no origin restriction.
 
+If the Netlify build log shows the auto-installed Next.js adapter interfering with the static export
+(`Export directory not found` / `publish directory does not contain expected Next.js build output`),
+uncomment `NETLIFY_NEXT_PLUGIN_SKIP = "true"` in `netlify.toml` to bypass it — the `out` folder is then
+published verbatim:
+
+```bash
+# reproduce the exact Netlify build locally
+cd frontend && rm -rf .next out && npm run build && npx serve out -l 3000
+```
+
