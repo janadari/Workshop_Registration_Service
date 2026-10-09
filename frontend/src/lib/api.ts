@@ -24,6 +24,17 @@ export async function fetchApi<T = unknown>(
   if (options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
+  /*
+   * ngrok's free tier answers browser-shaped requests with an HTML warning
+   * interstitial instead of forwarding them to the API, which makes
+   * `response.json()` blow up with a parse error. Sending this header (any
+   * value) opts out of that page. It only matters when the API base URL is a
+   * tunnel, so it is added conditionally and is harmless elsewhere - that way
+   * a Netlify deploy can be tested against a backend running on a laptop.
+   */
+  if (API_URL.includes('ngrok')) {
+    headers.set('ngrok-skip-browser-warning', 'true');
+  }
 
   let response: Response;
   try {
