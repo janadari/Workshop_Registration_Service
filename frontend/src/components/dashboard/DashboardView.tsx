@@ -525,11 +525,7 @@ export function DashboardView({ view }: { view: ViewKey }) {
           ) : null}
 
           {safeView === "users" ? (
-            <UsersView
-              users={users}
-              loading={loading}
-              onCreateUser={() => setShowUserModal(true)}
-            />
+            <UsersView users={users} loading={loading} />
           ) : null}
 
           {safeView === "activity" ? (

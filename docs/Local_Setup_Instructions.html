@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Workshop Registration Service - Local Setup Instructions</title>
+<style>
+  @page { size: A4; margin: 14mm 13mm; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 9.5pt; line-height: 1.44; color: #14181f; margin: 0; }
+  h1 { font-size: 18.5pt; margin: 0 0 2px 0; letter-spacing: -0.3px; }
+  .sub { font-size: 10pt; color: #55606e; margin: 0 0 9px 0; }
+  .meta { font-size: 8.2pt; color: #5b6572; border-top: 1px solid #d7dce3; border-bottom: 1px solid #d7dce3; padding: 5px 0; margin-bottom: 12px; }
+  h2 { font-size: 11.3pt; margin: 15px 0 6px 0; padding-bottom: 3px; border-bottom: 1.5px solid #14181f; page-break-after: avoid; }
+  h3 { font-size: 9.9pt; margin: 10px 0 4px 0; page-break-after: avoid; }
+  p { margin: 0 0 6px 0; }
+  ul, ol { margin: 0 0 6px 0; padding-left: 16px; }
+  li { margin-bottom: 2px; }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+  code { font-size: 8.7pt; background: #f1f3f6; padding: 0.5px 3px; border-radius: 3px; }
+  pre { background: #14181f; color: #e8ecf1; font-size: 8.3pt; line-height: 1.4; padding: 7px 9px; border-radius: 4px; margin: 0 0 7px 0; white-space: pre-wrap; page-break-inside: avoid; }
+  pre .c { color: #8d98a8; }
+  pre b { color: #9adc8b; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 8px 0; font-size: 8.6pt; page-break-inside: avoid; }
+  th, td { border: 1px solid #d7dce3; padding: 3.5px 5px; text-align: left; vertical-align: top; }
+  th { background: #eef1f5; font-weight: 600; }
+  td code { background: none; padding: 0; font-size: 8.4pt; }
+  .box { border: 1px solid #d7dce3; border-left: 3px solid #2f6feb; background: #f7f9fc; padding: 6px 9px; margin: 0 0 8px 0; font-size: 9pt; page-break-inside: avoid; }
+  .box.warn { border-left-color: #d9822b; background: #fdf8f2; }
+  .box.ok { border-left-color: #2f9e5f; background: #f3fbf6; }
+  .foot { margin-top: 12px; border-top: 1px solid #d7dce3; padding-top: 6px; font-size: 8.2pt; color: #5b6572; }
+</style>
+</head>
+<body>
+
+<h1>Workshop Registration Service</h1>
+<p class="sub">Local setup instructions &mdash; running the frontend and the backend on your machine</p>
+<div class="meta">
+  <b>Stack:</b> NestJS 12 + Prisma 6 + PostgreSQL (API) &nbsp;|&nbsp; Next.js 16 (React 19) + plain CSS (UI) &nbsp;|&nbsp;
+  <b>Verified on:</b> macOS, Node v22.17.0, npm 11.5.2
+</div>
+
+<p>Everything below is copy-paste. Run the steps in order and you will have the API on
+<code>http://localhost:3001</code>, the UI on <code>http://localhost:3000</code>, three working logins and four sample
+workshops &mdash; no hosted database required.</p>
+
+<h2>1. What you need</h2>
+<table>
+  <tr><th style="width:28%">Requirement</th><th style="width:24%">Version used</th><th>Notes</th></tr>
+  <tr><td>Node.js + npm</td><td>Node 20+ (v22.17.0)</td><td>Both apps are Node/TypeScript. Check with <code>node -v</code>.</td></tr>
+  <tr><td>PostgreSQL</td><td>14 or newer</td><td>Required: the Prisma schema declares <code>provider = "postgresql"</code>, and the capacity rule depends on Postgres row locking (<code>SELECT ... FOR UPDATE</code>). SQLite cannot express it.</td></tr>
+  <tr><td>Git</td><td>any</td><td>To clone the repository.</td></tr>
+  <tr><td>Docker <i>(optional)</i></td><td>&mdash;</td><td>Only the quickest way to get a disposable Postgres (option B below); a normal local install is fine too.</td></tr>
+</table>
+
+<p>Default ports (free them, or override &mdash; see the tables in each step):</p>
+<table>
+  <tr><th style="width:22%">Service</th><th style="width:16%">Port</th><th>How to change it</th></tr>
+  <tr><td>Backend API</td><td><code>3001</code></td><td><code>PORT=3002 npm run start:dev</code></td></tr>
+  <tr><td>Frontend</td><td><code>3000</code></td><td><code>npm run dev -- -p 3005</code></td></tr>
+  <tr><td>PostgreSQL</td><td><code>5432</code></td><td>Wherever you installed it (<code>5433</code> in the Docker example)</td></tr>
+</table>
+
+<h2>2. Repository layout</h2>
+<pre>workshop_registration/
+&#9500;&#9472; backend/              NestJS API
+&#9474;  &#9500;&#9472; prisma/schema.prisma    models: User, Workshop, Registration, AuditLog
+&#9474;  &#9500;&#9472; prisma/seed.ts          demo logins + sample workshops
+&#9474;  &#9500;&#9472; prisma/migrations/      committed SQL migrations
+&#9474;  &#9492;&#9472; src/                    auth/  users/  workshops/  registrations/
+&#9500;&#9472; frontend/             Next.js UI (overview, workshops, users, activity)
+&#9500;&#9472; README.md             status, deployment notes, issues &amp; solutions
+&#9492;&#9472; docs/                 this document + the design/trade-offs document</pre>
+
+<h2>3. Step 1 &mdash; get the code</h2>
+<pre>git clone &lt;repository-url&gt; workshop_registration
+cd workshop_registration</pre>
+<p>Two separate <code>package.json</code> files &mdash; one per app &mdash; so install and run each folder on its own.
+Use two terminals (or two terminal tabs): one for the API, one for the UI.</p>
+
+<h2>4. Step 2 &mdash; a PostgreSQL database</h2>
+<p>Pick the line that matches your machine. All three produce the same <code>DATABASE_URL</code> shape.</p>
+
+<h3>Option A &mdash; PostgreSQL already installed (Homebrew on macOS)</h3>
+<pre>brew services start postgresql@16
+createdb workshop_registration
+<span class="c"># DATABASE_URL: postgresql://&lt;your-macos-username&gt;@localhost:5432/workshop_registration</span></pre>
+<p>Homebrew's Postgres trusts local connections and sets no password by default, so the username is simply
+whoever you are (<code>whoami</code>). On Linux use <code>sudo -u postgres createdb workshop_registration</code>.</p>
+
+<h3>Option B &mdash; Docker (nothing to install, disposable)</h3>
+<pre>docker run --name wr-postgres -e POSTGRES_PASSWORD=postgres -p 5433:5432 -d postgres:16
+docker exec wr-postgres createdb -U postgres workshop_registration
+<span class="c"># DATABASE_URL: postgresql://postgres:postgres@localhost:5433/workshop_registration</span>
+<span class="c"># Stop it with: docker stop wr-postgres   (start again: docker start wr-postgres)</span></pre>
+
+<h3>Option C &mdash; a free Neon Postgres (same engine as the live deployment)</h3>
+<p>Create a project at neon.com, click <b>Connect</b> and copy <i>both</i> connection strings: the pooled one goes into
+<code>DATABASE_URL</code>, the direct (unpooled) one into <code>DIRECT_URL</code>, because migrations cannot run through the
+pooler. Keep the <code>?sslmode=require</code> the dashboard adds and append <code>&amp;connect_timeout=15</code> &mdash; Neon
+suspends idle computes and without it the first query can fail with "Can't reach database server".</p>
+
+<div class="box">
+  <b>Only the database name is created here.</b> The tables come from the migrations in step 4 &mdash; you do not need to
+  write any SQL by hand.
+</div>
+
+<h2>5. Step 3 &mdash; install the backend and point it at the database</h2>
+<pre>cd backend
+npm install            <span class="c"># NestJS, Prisma, bcrypt, vitest, oxlint</span>
+npx prisma generate    <span class="c"># generates the typed Prisma client into node_modules</span></pre>
+
+<p>Create <code>backend/.env</code> &mdash; the file is git-ignored, so real credentials never reach the repository:</p>
+<pre>DATABASE_URL="postgresql://postgres@localhost:5432/workshop_registration"
+DIRECT_URL="postgresql://postgres@localhost:5432/workshop_registration"
+JWT_SECRET="change-me-to-a-long-random-string"
+PORT=3001
+<span class="c"># CORS_ORIGIN="http://localhost:3000,https://your-site.netlify.app"   # only to lock CORS down</span></pre>
+
+<table>
+  <tr><th style="width:24%">Variable</th><th style="width:14%">Required?</th><th>What it does</th></tr>
+  <tr><td><code>DATABASE_URL</code></td><td>Yes</td><td>Runtime connection string used by Prisma Client.</td></tr>
+  <tr><td><code>DIRECT_URL</code></td><td>Yes*</td><td>Unpooled connection used by migrations. Locally set it to the same value as <code>DATABASE_URL</code>.</td></tr>
+  <tr><td><code>JWT_SECRET</code></td><td>Recommended</td><td>Signs and verifies the login tokens. Without it the API falls back to a development-only constant &mdash; acceptable locally, but a deployment <b>must</b> set it, otherwise anyone holding the source can forge an ADMIN token.</td></tr>
+  <tr><td><code>PORT</code></td><td>No</td><td>Defaults to <code>3001</code>.</td></tr>
+  <tr><td><code>CORS_ORIGIN</code></td><td>No</td><td>Comma-separated allow-list. Empty means CORS is open, which is what you want for local work and for any <code>*.netlify.app</code> preview URL.</td></tr>
+</table>
+
+<div class="box warn">
+  <b>Signed in yesterday and now every request is 401?</b> <code>JWT_SECRET</code> changed (or was added), so old tokens no
+  longer verify. Sign out and sign in again &mdash; nothing is broken.
+</div>
+
+<h2>6. Step 4 &mdash; create the tables and load the demo data</h2>
+<pre>npx prisma migrate deploy    <span class="c"># applies the committed migrations (creates all tables)</span>
+npm run db:seed              <span class="c"># 3 logins + 4 sample workshops</span></pre>
+
+<p>The seed prints what it created and is safe to run repeatedly: users are upserted without resetting an existing
+password, and registrations are only inserted into workshops that have none, so your own test data is never wiped.</p>
+
+<pre>Seeded development data:
+  ADMIN   admin@test.com     password: admin123
+  MANAGER manager@test.com   password: manager123
+  STAFF   staff@test.com     password: staff123
+  4 workshops: POT-101, COD-201, FIT-301, CER-110 - FIT-301 is full with 1 waitlisted
+  Dev-only credentials - replace them before any real deployment.</pre>
+
+<table>
+  <tr><th style="width:14%">Code</th><th style="width:24%">Workshop</th><th style="width:13%">Capacity</th><th>Why it is in the seed</th></tr>
+  <tr><td>POT-101</td><td>Pottery Basics</td><td>12 (2 taken)</td><td>Seats left &mdash; a normal registration flow.</td></tr>
+  <tr><td>COD-201</td><td>Intro to Coding</td><td>20 (1 cancelled)</td><td>Shows a cancellation in the history, with who and when.</td></tr>
+  <tr><td>FIT-301</td><td>Morning Fitness</td><td>4 (<b>full</b>)</td><td>Full with one attendee already waitlisted &mdash; register again and you join the queue; cancel an active seat and the queue is promoted.</td></tr>
+  <tr><td>CER-110</td><td>Ceramics Glazing</td><td>8</td><td>Past date and <code>COMPLETED</code> status, for the filters.</td></tr>
+</table>
+
+<div class="box">
+  <b>Prefer a GUI?</b> <code>npx prisma studio</code> opens a table browser for your database at
+  <code>http://localhost:5555</code>. To start over from an empty database: <code>npx prisma migrate reset</code>
+  (drops everything, re-runs migrations, re-seeds automatically).
+</div>
+
+<h2>7. Step 5 &mdash; run the backend API</h2>
+<pre>cd backend
+npm run start:dev      <span class="c"># watch mode, restarts on save  ->  http://localhost:3001</span></pre>
+<p>For a production-style run instead: <code>npm run build &amp;&amp; npm run start:prod</code>.</p>
+
+<p>Confirm it is up before moving on:</p>
+<pre>curl http://localhost:3001/health
+<span class="c"># {"status":"ok"}</span>
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3001/users
+<span class="c"># 401  - the request had no token, which is the correct answer</span></pre>
+
+<p>The API surface, and which role each route accepts:</p>
+<table>
+  <tr><th style="width:38%">Endpoint</th><th style="width:22%">Allowed roles</th><th>Purpose</th></tr>
+  <tr><td><code>POST /auth/login</code></td><td>public</td><td>Returns the JWT, the role and the email.</td></tr>
+  <tr><td><code>GET /health</code></td><td>public</td><td>Liveness probe for hosting platforms.</td></tr>
+  <tr><td><code>POST /users</code></td><td>ADMIN</td><td>Create an account and set its role. There is no public signup.</td></tr>
+  <tr><td><code>GET /users</code></td><td>ADMIN</td><td>List accounts.</td></tr>
+  <tr><td><code>GET /users/audit</code></td><td>ADMIN, MANAGER, STAFF</td><td>Audit trail (who did what, when).</td></tr>
+  <tr><td><code>GET /workshops</code></td><td>MANAGER, STAFF</td><td>Catalogue plus the active/seat counts used by the filters.</td></tr>
+  <tr><td><code>GET /workshops/:id</code></td><td>MANAGER, STAFF</td><td>One workshop with its full registration history.</td></tr>
+  <tr><td><code>POST /workshops</code></td><td>MANAGER</td><td>Add a workshop (409 if the code is already used).</td></tr>
+  <tr><td><code>PATCH /workshops/:id</code></td><td>MANAGER</td><td>Edit a workshop (title, instructor, date, capacity, status).</td></tr>
+  <tr><td><code>POST /registrations</code></td><td>MANAGER, STAFF</td><td>Register an attendee &mdash; <code>ACTIVE</code>, or <code>WAITLISTED</code> when the workshop is full.</td></tr>
+  <tr><td><code>PATCH /registrations/:id/cancel</code></td><td>MANAGER, STAFF</td><td>Cancel, keep the row, and promote the next waitlisted attendee.</td></tr>
+</table>
+
+<div class="box warn">
+  <b>An ADMIN token cannot list workshops</b> (<code>403</code>) &mdash; by design, from the roles table in the brief. Browse the
+  catalogue as <code>manager@test.com</code> or <code>staff@test.com</code>.
+</div>
+
+<h2>8. Step 6 &mdash; run the frontend</h2>
+<pre>cd ../frontend          <span class="c"># from the repository root: cd frontend</span>
+npm install
+npm run dev             <span class="c"># -> http://localhost:3000</span></pre>
+
+<p>Create <code>frontend/.env.local</code> to tell the UI where the API lives:</p>
+<pre>NEXT_PUBLIC_API_URL=http://localhost:3001</pre>
+
+<table>
+  <tr><th style="width:30%">Situation</th><th>What to do</th></tr>
+  <tr><td>Local development</td><td><code>.env.local</code> is optional &mdash; the code already falls back to <code>http://localhost:3001</code>.</td></tr>
+  <tr><td>Local production build</td><td>Set it if the API is on another port or host, then <code>npm run build</code>.</td></tr>
+  <tr><td>Netlify</td><td><b>Mandatory.</b> The value is baked into the bundle at build time, so a build without it produces a site that only talks to your own laptop. <code>next.config.ts</code> therefore fails the Netlify build with a clear message when the variable is missing or still points at localhost.</td></tr>
+</table>
+
+<h2>9. Step 7 &mdash; sign in and try it out</h2>
+<p>Open <code>http://localhost:3000</code>, sign in with one of the seeded accounts, and use the sidebar to switch views.
+The email is the only thing that changes what you can see.</p>
+
+<table>
+  <tr><th style="width:26%">Email</th><th style="width:16%">Password</th><th style="width:14%">Role</th><th>What you can do</th></tr>
+  <tr><td><code>admin@test.com</code></td><td><code>admin123</code></td><td>ADMIN</td><td>Create accounts and assign roles; read the audit trail.</td></tr>
+  <tr><td><code>manager@test.com</code></td><td><code>manager123</code></td><td>MANAGER</td><td>Add and edit workshops, register and cancel attendees, see history.</td></tr>
+  <tr><td><code>staff@test.com</code></td><td><code>staff123</code></td><td>STAFF</td><td>Register and cancel attendees, see history.</td></tr>
+</table>
+
+<p>Five-minute click-through that exercises every requirement:</p>
+<ol>
+  <li><b>Sign in as staff</b> &mdash; the workshops list loads with seat counters and no user-management menu.</li>
+  <li><b>Overview</b> &mdash; type a date range, or filter by status, or tick "seats available" only. That is requirement 4.</li>
+  <li><b>Workshops &rarr; FIT-301 (Morning Fitness)</b> &mdash; it shows 4/4 seats. Register an attendee: the response is a
+      <b>waitlist</b> row, not an error, and the seat count does not move.</li>
+  <li><b>Cancel</b> one of the active registrations on that same workshop. The cancelled row stays in the history with your
+      email and the time, and the person from step 3 is promoted to <code>ACTIVE</code> in the same instant the seat frees.</li>
+  <li><b>Sign in as manager</b> &mdash; add a workshop, then edit its capacity. Try the same code twice to see the 409 message.</li>
+  <li><b>Sign in as admin</b> &mdash; create a user with any role, then open <b>Activity</b> to see the trail: account
+      creation, workshop edits and cancellations, each with the actor and a timestamp.</li>
+</ol>
+
+<h2>10. Everyday commands</h2>
+<table>
+  <tr><th style="width:44%">Command</th><th>What it does</th></tr>
+  <tr><td><code>cd backend &amp;&amp; npm run start:dev</code></td><td>API with hot reload (port 3001).</td></tr>
+  <tr><td><code>cd frontend &amp;&amp; npm run dev</code></td><td>UI with hot reload (port 3000).</td></tr>
+  <tr><td><code>cd backend &amp;&amp; npm test</code></td><td>Unit tests (Vitest) &mdash; currently 6 passing, including the capacity and waitlist rules.</td></tr>
+  <tr><td><code>cd backend &amp;&amp; npm run lint</code></td><td>oxlint over <code>src/</code> and <code>test/</code>.</td></tr>
+  <tr><td><code>cd backend &amp;&amp; npm run build</code></td><td>Type-check and compile to <code>dist/</code>.</td></tr>
+  <tr><td><code>cd backend &amp;&amp; npm run db:seed</code></td><td>Re-run the seed at any time; it never overwrites your data.</td></tr>
+  <tr><td><code>cd backend &amp;&amp; npx prisma studio</code></td><td>Browse and edit the database in the browser.</td></tr>
+  <tr><td><code>cd backend &amp;&amp; npx prisma migrate reset</code></td><td>Drop everything, re-migrate and re-seed &mdash; a clean slate.</td></tr>
+  <tr><td><code>cd frontend &amp;&amp; npm run build</code></td><td>Static export into <code>frontend/out</code> (this is what Netlify publishes).</td></tr>
+</table>
+
+<h2>11. If something does not work</h2>
+<table>
+  <tr><th style="width:31%">Symptom</th><th>Cause and fix</th></tr>
+  <tr><td>The login page says <i>"Unable to reach the server"</i></td><td>The API is not running, or the UI is pointed elsewhere. Check <code>curl http://localhost:3001/health</code>; if that works, fix <code>NEXT_PUBLIC_API_URL</code> in <code>frontend/.env.local</code> and restart <code>npm run dev</code> (Next.js inlines the value at build/start time).</td></tr>
+  <tr><td><code>Can't reach database server</code> / Prisma <code>P1001</code></td><td>Postgres is not running or the URL is wrong. <code>brew services list</code>, <code>docker ps</code>, or try <code>psql "$DATABASE_URL"</code>. For Neon, add <code>&amp;connect_timeout=15</code> &mdash; the first connection after the compute wakes can take a few seconds.</td></tr>
+  <tr><td><code>Environment variable not found: DATABASE_URL</code></td><td><code>backend/.env</code> is missing or in the wrong folder. It must sit next to <code>backend/package.json</code>.</td></tr>
+  <tr><td>TypeScript cannot find <code>@prisma/client</code></td><td>Run <code>npx prisma generate</code> (step 3). It must be repeated after changing <code>schema.prisma</code>.</td></tr>
+  <tr><td><code>EADDRINUSE</code> on 3000 or 3001</td><td>Something already owns the port. <code>lsof -ti:3001 | xargs kill</code>, or use another one: <code>PORT=3002 npm run start:dev</code> and the matching <code>NEXT_PUBLIC_API_URL</code>.</td></tr>
+  <tr><td><code>401 Invalid signature</code> right after signing in</td><td>Two servers with different <code>JWT_SECRET</code> values, or the secret changed under a live token. Restart the API with one secret and sign in again.</td></tr>
+  <tr><td><code>400</code> with "property X should not exist"</td><td>The API rejects unknown body fields on purpose. Send only the fields the endpoint documents.</td></tr>
+  <tr><td>Registration answered <code>WAITLISTED</code> instead of <code>ACTIVE</code></td><td>Not a bug: the workshop is full. Cancel an active registration and the first person in the queue (oldest first) is promoted automatically.</td></tr>
+  <tr><td>Nothing appears in the Activity view</td><td>Expected on a brand-new database &mdash; the list fills as soon as you create a user, edit a workshop, register or cancel. <code>npm run db:seed</code> also writes a few entries.</td></tr>
+</table>
+
+<div class="foot">
+  <b>One-repo layout:</b> the backend and the frontend live side by side, each with its own <code>package.json</code>. There is no
+  monorepo tooling to install &mdash; two terminals and the steps above are the whole story. Deployment notes (Render + Netlify +
+  Neon) are in <code>README.md</code>; the reasoning behind the technology choices, the design decisions and the capacity rule is in
+  <i>Technology Choices, Design Decisions and Trade-offs</i>.
+</div>
+
+</body>
+</html>

@@ -1,16 +1,21 @@
 "use client";
 
-import { ShieldCheck, UserPlus, Users } from "lucide-react";
+import { ShieldCheck, Users } from "lucide-react";
 import { EmptyState, RoleBadge, SkeletonList, StatCard } from "./shared";
 import { formatDateTime, initials, type Role, type UserAccount } from "./types";
 
+/*
+ * This view is read-only on purpose: creating an account is the page-level
+ * "New user" action in the dashboard header (DashboardView -> page-actions),
+ * which is visible on every view. Having a second "Create user" button here
+ * gave the same dialog two adjacent entry points with two different labels.
+ */
 type UsersViewProps = {
   users: UserAccount[];
   loading: boolean;
-  onCreateUser: () => void;
 };
 
-export function UsersView({ users, loading, onCreateUser }: UsersViewProps) {
+export function UsersView({ users, loading }: UsersViewProps) {
   const count = (role: Role) => users.filter((user) => user.role === role).length;
 
   return (
@@ -51,10 +56,6 @@ export function UsersView({ users, loading, onCreateUser }: UsersViewProps) {
           <h2>User accounts</h2>
           <span>Roles decide what each person can reach</span>
         </div>
-        <button className="btn btn-primary btn-sm" onClick={onCreateUser} type="button">
-          <UserPlus size={15} />
-          Create user
-        </button>
       </div>
 
       {loading ? (

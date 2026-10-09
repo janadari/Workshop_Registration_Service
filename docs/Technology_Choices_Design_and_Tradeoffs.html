@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Workshop Registration Service - Technology Choices, Design Decisions and Trade-offs</title>
+<style>
+  @page { size: A4; margin: 12mm 12mm; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 9pt; line-height: 1.34; color: #14181f; margin: 0; }
+  h1 { font-size: 18.5pt; margin: 0 0 2px 0; letter-spacing: -0.3px; }
+  .sub { font-size: 10pt; color: #55606e; margin: 0 0 9px 0; }
+  .meta { font-size: 8.2pt; color: #5b6572; border-top: 1px solid #d7dce3; border-bottom: 1px solid #d7dce3; padding: 5px 0; margin-bottom: 12px; }
+  h2 { font-size: 11.3pt; margin: 15px 0 6px 0; padding-bottom: 3px; border-bottom: 1.5px solid #14181f; page-break-after: avoid; }
+  h3 { font-size: 9.9pt; margin: 10px 0 4px 0; page-break-after: avoid; }
+  p { margin: 0 0 6px 0; }
+  ul, ol { margin: 0 0 6px 0; padding-left: 16px; }
+  li { margin-bottom: 2.5px; }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+  code { font-size: 8.7pt; background: #f1f3f6; padding: 0.5px 3px; border-radius: 3px; }
+  pre { background: #14181f; color: #e8ecf1; font-size: 8.3pt; line-height: 1.4; padding: 7px 9px; border-radius: 4px; margin: 0 0 7px 0; white-space: pre-wrap; page-break-inside: avoid; }
+  pre .c { color: #8d98a8; }
+  pre b { color: #9adc8b; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 8px 0; font-size: 8.6pt; page-break-inside: auto; }
+  tr { page-break-inside: avoid; }
+  th, td { border: 1px solid #d7dce3; padding: 3.5px 5px; text-align: left; vertical-align: top; }
+  th { background: #eef1f5; font-weight: 600; }
+  td code { background: none; padding: 0; font-size: 8.4pt; }
+  .box { border: 1px solid #d7dce3; border-left: 3px solid #2f6feb; background: #f7f9fc; padding: 6px 9px; margin: 0 0 8px 0; font-size: 9pt; page-break-inside: avoid; }
+  .box.warn { border-left-color: #d9822b; background: #fdf8f2; }
+  .box.ok { border-left-color: #2f9e5f; background: #f3fbf6; }
+  .foot { margin-top: 12px; border-top: 1px solid #d7dce3; padding-top: 6px; font-size: 8.2pt; color: #5b6572; }
+</style>
+</head>
+<body>
+
+<h1>Technology Choices, Design Decisions &amp; Trade-offs</h1>
+<p class="sub">Workshop Registration Service &mdash; the reasoning behind the build, and how over-registration is prevented</p>
+<div class="meta">
+  <b>Deliverable:</b> the written document requested in the brief &nbsp;|&nbsp; <b>Companion:</b> <i>Local Setup Instructions</i> &nbsp;|&nbsp;
+  <b>Measured on:</b> Node v22.17.0, PostgreSQL 16, 10 concurrent requests
+</div>
+
+<p>The brief asks for one short document covering six subjects, so this is organised to be read in order of importance:
+<b>&sect;1</b> maps each problem in the brief to what was built, <b>&sect;4</b> is the capacity rule and the measurement behind
+it, and <b>&sect;2, 3, 5&ndash;7</b> give the reasoning, the assumptions, what was skipped and what was verified. Read &sect;1 and
+&sect;4 if you only have a minute.</p>
+
+<h2>1. What the brief asked for, and what was built</h2>
+<p>The client described four concrete pains. Each one is answered by something in the running application &mdash; not by a
+UI-only workaround, because the brief is explicit that anything outside the roles table "must be refused by the backend".</p>
+
+<table>
+  <tr><th style="width:32%">Pain in the brief</th><th style="width:40%">How it is solved</th><th>Where</th></tr>
+  <tr>
+    <td>"24 people turned up for a workshop with 20 seats. Two of us promised the last seat at the same time."</td>
+    <td>Capacity is enforced inside a database transaction that first takes a row lock on the workshop, so simultaneous requests are serialised and only one of them can take the final seat. A full workshop puts the next person on a waitlist instead of overbooking. Measured before/after in section 4.</td>
+    <td><code>registrations.service.ts</code></td>
+  </tr>
+  <tr>
+    <td>"When someone cancels, nobody frees up the seat or records who did it."</td>
+    <td>Cancelling frees the seat and immediately offers it to the oldest waitlisted attendee; the row itself is never deleted and keeps who cancelled it and when. A shared audit trail records every change with actor and timestamp.</td>
+    <td><code>RegistrationsService.cancel</code>, <code>AuditLog</code></td>
+  </tr>
+  <tr>
+    <td>"Three types of user, no public signup, permissions refused by the backend."</td>
+    <td>The first ADMIN is seeded; only an ADMIN can create accounts. Every route is protected by a JWT guard plus a role guard, so a forbidden action is a 403 from the API even if the UI never offered the button.</td>
+    <td><code>RolesGuard</code>, <code>@Roles()</code></td>
+  </tr>
+  <tr>
+    <td>"I just want to see which workshops this week still have seats."</td>
+    <td>The overview filters by date range, status and "seats available only", using seat counts the API computes and returns with each workshop.</td>
+    <td><code>DashboardView</code>, <code>GET /workshops</code></td>
+  </tr>
+  <tr>
+    <td>Extra credit: audit trail and waitlist</td>
+    <td><code>AuditLog</code> rows for account creation, workshop create/edit, registration, cancellation and promotion, surfaced in an Activity view; plus a third registration status, <code>WAITLISTED</code>, promoted automatically when a seat is freed.</td>
+    <td><code>ActivityView</code>, <code>promoteNextWaitlist</code></td>
+  </tr>
+</table>
+
+<p>Two fields were added to the spreadsheet the client shared, because the brief invited suggestions: a unique
+<code>code</code> per workshop (it is the natural identifier the staff already quote on the phone) and a
+<code>status</code> of <code>SCHEDULED</code> / <code>COMPLETED</code> / <code>CANCELLED</code>. Timestamps
+(<code>createdAt</code>, <code>updatedAt</code>, <code>cancelledAt</code>) were added for free by the ORM.</p>
+
+<h2>2. Technology choices and why</h2>
+<p>The brief left the stack open but asked for the reasoning. Each choice below was made against a deadline of a few hours,
+so "fast to build correctly" and "easy for a reviewer to run" counted as much as elegance.</p>
+
+<table>
+  <tr><th style="width:19%">Choice</th><th style="width:41%">Why</th><th>Trade-off accepted</th></tr>
+  <tr>
+    <td><b>NestJS 12</b> + TypeScript (backend)</td>
+    <td>The brief's permission table is a routing concern, and Nest expresses it declaratively: <code>@UseGuards(JwtAuthGuard, RolesGuard)</code> plus <code>@Roles('ADMIN')</code> on the handler. DTO classes with <code>class-validator</code> give input validation for free, and dependency injection keeps the capacity logic in one testable service. TypeScript catches the role/status typos that a plain JavaScript Express app would only reveal at runtime.</td>
+    <td>More ceremony than Express for a small API (modules, providers, decorators). Worth it here because correctness of access control and transactions is the graded part.</td>
+  </tr>
+  <tr>
+    <td><b>Prisma 6</b> (ORM + migrations)</td>
+    <td>One schema file is the source of truth for the models <i>and</i> the migration history, so table changes are reviewable in the repo. The generated client is fully typed, and <code>prisma.$transaction(async tx =&gt; ...)</code> is what makes the multi-statement capacity check expressible without hand-written connection management.</td>
+    <td>An abstraction over SQL. When the capacity rule needed a real row lock, that meant dropping to <code>$queryRaw</code> for one statement (documented in the code) instead of staying inside the typed API.</td>
+  </tr>
+  <tr>
+    <td><b>PostgreSQL</b> (not SQLite)</td>
+    <td>The one rule the client cares about most is a concurrency rule, and it is only provable with row-level locking: <code>SELECT ... FOR UPDATE</code>. Postgres also gives real concurrent write behaviour to test against, and it is what the free hosting tier provides. SQLite would have been zero-setup, but it serialises writes anyway and cannot express this lock, so "it passed locally" would have proven nothing.</td>
+    <td>The reviewer must have Postgres available. Mitigated by the setup document (three ways to get one, including a single Docker command) and by the fact that the free hosted database is the same engine.</td>
+  </tr>
+  <tr>
+    <td><b>JWT + bcrypt</b> (<code>passport-jwt</code>)</td>
+    <td>Matches the client's "no public signup" model with no session store: the API is stateless, so a second instance needs no shared session. The role travels in the token, which is what the role guard reads. bcrypt keeps password hashes salted and slow; the API never returns a hash.</td>
+    <td>No server-side revocation: a stolen token stays valid until it expires (1 day). Passwords are hashed, tokens are stored in <code>localStorage</code>, which is readable by any XSS on the page &mdash; acceptable for an internal tool on a trusted network, and the first thing to change for a public one.</td>
+  </tr>
+  <tr>
+    <td><b>Next.js 16</b> (App Router, static export) + plain CSS</td>
+    <td>Everything the UI does needs a signed-in user, so there is nothing to render on a server: <code>output: "export"</code> ships the app as static files, which is free to host anywhere and needs no runtime. Plain CSS with custom properties kept the design consistent without adding a styling toolchain.</td>
+    <td>No SSR/SEO and no Next image optimisation (irrelevant for a logged-in internal dashboard). Deep links rely on <code>trailingSlash</code> so each route resolves to a real <code>index.html</code>.</td>
+  </tr>
+  <tr>
+    <td><b>Vitest</b> + <b>oxlint</b></td>
+    <td>The unit suite mocks the Prisma transaction, so the capacity, waitlist and double-cancel rules are asserted in milliseconds, and <code>npm test</code> is the only command a reviewer needs to know.</td>
+    <td>Not the Jest ecosystem &mdash; negligible for a handful of suites (see section 7).</td>
+  </tr>
+  <tr>
+    <td><b>Netlify + Render + Neon</b> (deployment)</td>
+    <td>All three have a usable free tier and map onto the architecture: static files on a CDN, a Node service for the API, managed Postgres for the data. The blueprint lives in <code>render.yaml</code> so the API environment is reproducible rather than clicked together.</td>
+    <td>Free instances sleep (Render ~15 minutes idle, Neon suspends computes), so the first request after a pause takes up to a minute. The UI shows a plain "Unable to reach the server" message instead of hanging, and the setup document explains warming the API before a demo.</td>
+  </tr>
+</table>
+
+<h2>3. Design decisions</h2>
+
+<h3>3.1 Access control lives on the server</h3>
+<p>Two guards run on every protected route: the JWT guard proves <i>who</i> the caller is, the role guard decides
+<i>whether</i> they may. Roles are attached to the handler with a decorator, so the permission table from the brief is
+readable straight off the controllers. The frontend also hides what a role cannot use (the sidebar is filtered by role, and
+the admin-only menu simply is not rendered for a manager), but that is convenience, never the control &mdash; hiding a button
+protects nothing.</p>
+
+<table>
+  <tr><th style="width:22%">Action</th><th style="width:11%">ADMIN</th><th style="width:12%">MANAGER</th><th style="width:11%">STAFF</th><th>Enforcement</th></tr>
+  <tr><td>Create accounts / set roles</td><td>Yes</td><td>403</td><td>403</td><td><code>@Roles('ADMIN')</code> on <code>POST /users</code></td></tr>
+  <tr><td>List accounts</td><td>Yes</td><td>403</td><td>403</td><td><code>@Roles('ADMIN')</code> on <code>GET /users</code></td></tr>
+  <tr><td>Add / edit workshops</td><td>403</td><td>Yes</td><td>403</td><td><code>@Roles('MANAGER')</code> on <code>POST</code> and <code>PATCH /workshops</code></td></tr>
+  <tr><td>View workshops &amp; history</td><td>403</td><td>Yes</td><td>Yes</td><td><code>@Roles('MANAGER','STAFF')</code> on the read routes</td></tr>
+  <tr><td>Register / cancel attendees</td><td>403</td><td>Yes</td><td>Yes</td><td><code>@Roles('MANAGER','STAFF')</code> on <code>/registrations</code></td></tr>
+  <tr><td>View the audit trail</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Same roles as "view history" &mdash; the bonus trail is a read of what those two roles already cause</td></tr>
+  <tr><td>Anything else</td><td colspan="3">403</td><td>No route is reachable without a valid token: a missing or expired token is answered by the JWT guard with 401</td></tr>
+</table>
+
+<p>An ADMIN legitimately gets a 403 on <code>GET /workshops</code>, which looks surprising for a second. It is the literal
+reading of the brief's table &mdash; an administrator looks after staff accounts, workshop management belongs to the manager
+&mdash; and giving the admin everything "because admins usually can" would contradict the requirement that anything unmarked be
+refused by the backend. Since it is a deliberate decision rather than a hidden behaviour, the UI tells the admin which role
+to use instead of showing a broken page.</p>
+
+<h3>3.2 API shape and error semantics</h3>
+<p>Controllers stay thin (parse, delegate, return) and services own the invariants. Input never reaches a service without
+passing a DTO, and the global validation pipe rejects anything unexpected, so an unvalidated field cannot be smuggled into a
+write. Status codes are used for what they mean, which lets the frontend show the server's own message instead of
+inventing one:</p>
+
+<table>
+  <tr><th style="width:12%">Code</th><th style="width:34%">When</th><th>Example seen by the user</th></tr>
+  <tr><td><code>400</code></td><td>Validation failed, or an unknown field was sent</td><td>"role must be one of ADMIN, MANAGER, STAFF"</td></tr>
+  <tr><td><code>401</code></td><td>No token, expired token, wrong password</td><td>"Invalid credentials"</td></tr>
+  <tr><td><code>403</code></td><td>Authenticated, but the role may not do this</td><td>"You do not have permission to perform this action."</td></tr>
+  <tr><td><code>404</code></td><td>Unknown workshop or registration id</td><td>"Workshop not found"</td></tr>
+  <tr><td><code>409</code></td><td>A unique value is already taken</td><td>"Workshop code POT-101 is already in use"</td></tr>
+</table>
+
+<p>Seat counts are computed by the API (one grouped query) and returned <i>with</i> each workshop, so the list, the filters and
+the detail view all agree on the same numbers. The UI never adds up registrations itself &mdash; duplicating that arithmetic in
+the client is how two screens end up disagreeing about a full workshop.</p>
+
+<h3>3.3 The data model keeps history by construction</h3>
+<ul>
+  <li><b>A registration is never deleted.</b> Cancelling changes its <code>status</code> to <code>CANCELLED</code> and stamps
+      <code>cancelledById</code> and <code>cancelledAt</code>; <code>createdById</code> and <code>createdAt</code> have been there
+      since registration. The brief's requirement ("the record is never deleted, history always accessible") is therefore a
+      property of the table, not a rule someone has to remember to follow.</li>
+  <li><b>Waitlist is a status, not a second table.</b> <code>ACTIVE</code> / <code>WAITLISTED</code> / <code>CANCELLED</code> on
+      one row means a person entering the queue and later being promoted is a single row changing state, so the history view
+      shows one continuous story. A separate waitlist table would have needed a copy step on every promotion and would have
+      split the audit trail.</li>
+  <li><b><code>AuditLog</code> for everything else</b> (account creation, workshop create/edit, registration, cancellation,
+      promotion), each row carrying actor, action, entity, entity id, a JSON detail string and a timestamp. One flat table
+      that any screen can render was preferred over per-entity history tables.</li>
+  <li><b>Statuses are strings validated with <code>@IsIn(...)</code></b>, not database enums. The project began on SQLite,
+      which has no native enum, and the API's job is to reject nonsense anyway; adding a fourth status later is then a
+      one-line change rather than a migration that has to rewrite a type.</li>
+  <li><b>Deliberate omission:</b> <code>attendeeEmail</code> is not unique per workshop, so the same person can be registered
+      twice (two attendees genuinely sharing a phone or an email is normal at a front desk). If the client wants a
+      duplicate check, it is one unique index plus a 409 &mdash; a deliberate choice, not an oversight.</li>
+</ul>
+
+<h2>4. How over-registration is prevented</h2>
+
+<p>The client's own words: <i>"a workshop can never hold more active registrations than its capacity"</i>, and "two of us
+promising the last seat at the same time is exactly what we are trying to stop". That makes this the one rule where "it
+worked when I clicked it" proves nothing, so it was tested the way it fails: ten staff hitting the same workshop at the same
+instant. The first version of the code <b>did</b> overbook. What follows is the measurement, the reason, and the fix.</p>
+
+<h3>4.1 Why a capacity check is harder than it looks</h3>
+<p>Deciding whether a seat is free is a read-then-write decision: count the active registrations, then insert (or update) a
+row. Between the read and the write, another request can do the same read and see the same stale answer. This is a classic
+time-of-check-to-time-of-use (TOCTOU) race, and no amount of testing with one user at a time exposes it.</p>
+
+<p>The tempting fix is "wrap it in a transaction". That is not sufficient, and it is worth being precise about why: PostgreSQL
+runs statements at <code>READ COMMITTED</code> by default, where each statement sees a snapshot of committed data and a
+<code>COUNT()</code> takes no lock on the rows it reads. Two overlapping transactions both count zero active rows, both
+conclude a seat is free, and both insert <code>ACTIVE</code>. The transaction gives atomicity, not mutual exclusion.</p>
+
+<div class="box warn">
+  <b>Measured, before the fix.</b> A probe created a workshop with <code>capacity = 1</code> and fired 10 registrations at
+  the same instant (threads released together by a barrier), then counted the rows by status:
+  <table style="margin-top:6px">
+    <tr><th>Requests in flight</th><th>Capacity</th><th>Rows ending ACTIVE</th><th>Verdict</th></tr>
+    <tr><td>10 (simultaneous)</td><td>1</td><td><b>7</b></td><td>FAIL &mdash; 6 attendees overbooked</td></tr>
+  </table>
+  That is the client's Saturday morning, reproduced in a few milliseconds: 7 staff each told an attendee they had the last seat.
+</div>
+
+<h3>4.2 The fix: take the row lock before counting</h3>
+<p>The decision is serialised by locking the workshop row for the duration of the transaction, before the count runs. Every
+path that can change a seat count takes this lock first, so the check and the write inside one transaction cannot be
+interleaved with another:</p>
+
+<pre><span class="c">// registrations.service.ts - first statement inside this.prisma.$transaction(...)</span>
+await tx.$queryRaw`SELECT id FROM "Workshop" WHERE id = ${workshopId} FOR UPDATE`;
+
+<span class="c">// ...only now is the count trustworthy for this workshop:</span>
+const activeCount = await tx.registration.count({ where: { workshopId, status: 'ACTIVE' } });
+const status = activeCount >= workshop.capacity ? 'WAITLISTED' : 'ACTIVE';
+await tx.registration.create({ data: { workshopId, attendeeName, attendeeEmail, status, createdById: userId } });</pre>
+
+<p>What happens when 10 requests arrive together: the first transaction takes the lock and reads a count of 0, so it takes the
+seat; the other nine block on the same row. As each one is released it re-reads the count <i>after</i> the previous
+transaction committed &mdash; it now sees 1 of 1, so it writes <code>WAITLISTED</code> instead of a second <code>ACTIVE</code>.
+Nobody is turned away with an error and nobody is overbooked: the tenth person is queued, which is exactly the behaviour the
+waitlist bonus asks for. The lock is a single line, the id is parameterised (the tagged template becomes <code>$1</code>, never
+string interpolation), and no application-level mutex is involved &mdash; which matters, because an in-process lock would
+silently stop working the moment a second API instance existed.</p>
+
+<div class="box ok">
+  <b>Measured, after the fix</b> (same probe, run three times):
+  <table style="margin-top:6px">
+    <tr><th>Run</th><th>Requests in flight</th><th>Capacity</th><th>Rows ACTIVE</th><th>Rows WAITLISTED</th><th>Verdict</th></tr>
+    <tr><td>1</td><td>10</td><td>1</td><td><b>1</b></td><td>9</td><td>PASS</td></tr>
+    <tr><td>2</td><td>10</td><td>1</td><td><b>1</b></td><td>9</td><td>PASS</td></tr>
+    <tr><td>3</td><td>10</td><td>1</td><td><b>1</b></td><td>9</td><td>PASS</td></tr>
+  </table>
+  Identical outcome every run, which is the property that matters: the result no longer depends on timing.
+</div>
+
+<h3>4.3 Cancelling is the mirror image, and gets three guards</h3>
+<p>Freeing a seat has the same shape as taking one, plus a second risk: a seat that is freed twice can promote two people
+into it. Cancelling therefore does all of this inside one transaction:</p>
+<ol>
+  <li><b>Lock first, then re-read.</b> The workshop row is locked before the registration's status is read, so the
+      "was a seat actually freed?" decision cannot be made concurrently by two requests.</li>
+  <li><b>Cancelling an already-cancelled registration is a no-op</b> that returns the existing row. It cannot free a second
+      seat, and it cannot overwrite the original <code>cancelledById</code> / <code>cancelledAt</code> &mdash; the history keeps
+      the person who really did it.</li>
+  <li><b>Promotion happens only when an ACTIVE seat was actually freed</b>, and only while the count is still below capacity.
+      Promoting the oldest waitlisted attendee (<code>ORDER BY createdAt ASC</code>) is the queue the front desk expects, and
+      it records a <code>PROMOTE_WAITLIST</code> audit entry so the promotion is as traceable as the cancellation.</li>
+</ol>
+<p>End-to-end on the seeded full workshop: 4 seats, 4 active, 1 waitlisted. Registering a fifth attendee returns
+<code>WAITLISTED</code>; cancelling one active registration leaves 4 active again with the waitlisted attendee promoted, the
+cancelled row still present with the actor and timestamp, and two new audit entries.</p>
+
+<h3>4.4 Alternatives considered, and why this one</h3>
+<table>
+  <tr><th style="width:26%">Option</th><th style="width:37%">Would it work?</th><th>Why it was not chosen</th></tr>
+  <tr>
+    <td><code>SERIALIZABLE</code> isolation + retry loop</td>
+    <td>Yes &mdash; Postgres aborts one of the conflicting transactions and the retry re-checks.</td>
+    <td>Every write path needs retry handling, and serialisation failures become a normal, user-visible code path. More code and less predictable latency than one lock on one row.</td>
+  </tr>
+  <tr>
+    <td>Unique partial index ("one ACTIVE row per seat")</td>
+    <td>No. An index can forbid duplicate <i>values</i>, but "at most <code>capacity</code> rows per workshop, and capacity changes" is not expressible.</td>
+    <td>Wrong tool: the rule is a count, not a uniqueness constraint.</td>
+  </tr>
+  <tr>
+    <td>Version column on Workshop + optimistic retry</td>
+    <td>Yes with a retry loop on conflict.</td>
+    <td>Same retry cost as SERIALIZABLE, plus a schema change and app-level conflict handling for a rule that needs no concurrency at all.</td>
+  </tr>
+  <tr>
+    <td>Database trigger / <code>CHECK</code> constraint counting rows</td>
+    <td>Possible with a trigger.</td>
+    <td>Hand-written SQL outside the Prisma migration flow, harder to test at the API level and to explain to the next developer. It is the natural belt-and-braces addition if other write paths ever appear.</td>
+  </tr>
+  <tr>
+    <td>In-process mutex, or a Redis / advisory lock</td>
+    <td>Only in-process would work, and only on a single instance.</td>
+    <td>A JavaScript mutex stops protecting anything the moment the API is scaled to two instances &mdash; a latent bug that looks fixed. Redis adds infrastructure to solve a problem Postgres already solves; an advisory lock is better, but it is the same Postgres feature with a less obvious name.</td>
+  </tr>
+</table>
+
+<div class="box">
+  <b>Honest limitation.</b> The guarantee holds for every path that takes the lock, which today is both write paths
+  (register and cancel). If a future endpoint inserts an <code>ACTIVE</code> registration without locking, the rule can be
+  broken again &mdash; so the lock is documented in the service, and the DB-trigger option above remains the way to make it
+  impossible rather than merely unimplemented.
+</div>
+
+<h3>4.5 Reproducing the measurement</h3>
+<p>The probe ships with the repository, so the claim above can be checked rather than trusted:</p>
+<pre><span class="c"># API running and seeded (see the setup document), then:</span>
+python3 scripts/concurrency-check.py
+<span class="c"># workshop &lt;id&gt; (RACE-...) capacity=1 -&gt;  10 simultaneous registrations</span>
+<span class="c">#   HTTP 201 ACTIVE: 1</span>
+<span class="c">#   HTTP 201 WAITLISTED: 9</span>
+<span class="c"># DB rows: {'ACTIVE': 1, 'WAITLISTED': 9} | ACTIVE should be &lt;= 1</span>
+<span class="c"># RESULT: PASS - capacity respected</span></pre>
+<p>To see the bug it prevents, remove the <code>SELECT ... FOR UPDATE</code> line from
+<code>backend/src/registrations/registrations.service.ts</code>, rebuild, and run the same command: the ACTIVE count jumps
+above 1 because the count-then-insert window is open again.</p>
+
+<h2>5. Trade-offs and assumptions</h2>
+
+<h3>5.1 Assumptions</h3>
+<ul>
+  <li><b>Attendees have no accounts.</b> The brief says staff type a name and an email, so there is no attendee login, no
+      password reset and no self-service booking. A registration row therefore stores the name and email as entered rather
+      than pointing at a user.</li>
+  <li><b>The front desk is trusted and identifiable.</b> Every registration and cancellation is stamped with the signed-in
+      staff member, so accountability comes from the account rather than from extra fields on the form.</li>
+  <li><b>Capacity is a seat count, not a fixed room.</b> Editing capacity below the current number of active registrations is
+      allowed and never un-registers anyone; it simply stops further <code>ACTIVE</code> registrations until seats fall below
+      the new limit. Blocking the edit outright would have been more work for less flexibility.</li>
+  <li><b>Workshop codes are unique</b> and are what staff quote on the phone, so a duplicate is refused (409) rather than
+      silently accepted.</li>
+  <li><b>Times are stored in UTC</b> and rendered in the browser's local zone &mdash; correct for a centre with three locations in
+      one time zone, and harmless otherwise.</li>
+  <li><b>One shared database, small scale.</b> Around 15 staff and a few workshops a week: no sharding, no cache layer and no
+      read replicas, because none of it would earn its keep at that size.</li>
+</ul>
+
+<h3>5.2 Problems found while building, and how each was solved</h3>
+<p>These surfaced during the build and are fixed in the committed code &mdash; listed because the diagnosis is the interesting
+part, not the diff.</p>
+<table>
+  <tr><th style="width:30%">Problem</th><th style="width:36%">Effect if left alone</th><th>Fix</th></tr>
+  <tr>
+    <td><b>Over-registration race</b> &mdash; count-then-insert under <code>READ COMMITTED</code></td>
+    <td>7 active rows on a 1-seat workshop: the exact failure the client hired us to stop.</td>
+    <td>Row lock (<code>SELECT ... FOR UPDATE</code>) taken before the count, in both write paths. Section 4.</td>
+  </tr>
+  <tr>
+    <td><b>Hardcoded JWT secret</b> (<code>'super-secret'</code>, in the signing <i>and</i> the verifying code)</td>
+    <td>The worst kind of bug: everything works, so nothing looks broken &mdash; yet anyone who can read the repository can sign
+    themselves an ADMIN token and call every endpoint. It also ignored the secret the deployment generated.</td>
+    <td>One source of truth (<code>jwt.constants.ts</code>) reading <code>JWT_SECRET</code> from the environment, with a
+    development-only fallback so local runs stay frictionless and production cannot fall back silently.</td>
+  </tr>
+  <tr>
+    <td><b>Validation gaps in the DTOs</b> &mdash; <code>role</code>, <code>status</code> and <code>capacity</code> accepted any value; the update DTOs had no decorators at all</td>
+    <td>A typo such as <code>capacity: 0</code> or an invented role reached the database, where it becomes a support ticket.
+    The rules existed only in the interface.</td>
+    <td>Shared <code>ROLES</code> / <code>WORKSHOP_STATUSES</code> constants with <code>@IsIn(...)</code>, plus
+    <code>@IsInt() @Min(1)</code> on capacity and real decorators on the update DTOs. Bad input is now a 400 with a message.</td>
+  </tr>
+  <tr>
+    <td><b>Duplicate workshop code answered 500</b> ("Internal server error")</td>
+    <td>The manager filling in the form has no idea what went wrong, and it reads as a broken system rather than a rejected
+    input.</td>
+    <td>Explicit uniqueness check on create, answered with a 409 naming the offending code.</td>
+  </tr>
+  <tr>
+    <td><b>The README described a different application</b> (SQLite, a full workshop answered with an error, no waitlist, one seeded user)</td>
+    <td>A reviewer following the document would set up something that does not match the code &mdash; the fastest way to lose
+    confidence in a submission.</td>
+    <td>Setup, seeding, roles and the capacity behaviour documented as they actually are, with the longer explanations moved
+    into this pair of documents.</td>
+  </tr>
+  <tr>
+    <td><b>Missing <code>NEXT_PUBLIC_API_URL</code> on Netlify</b> shipped a site that silently called <code>localhost:3001</code></td>
+    <td>The deploy works on the developer's laptop and is broken for everyone else &mdash; the classic reason a live link fails an
+    interview.</td>
+    <td>The build now refuses to finish when the variable is missing or still local, and prints which environment variables it
+    did see.</td>
+  </tr>
+</table>
+
+<h2>6. What was deliberately left out</h2>
+<ul>
+  <li><b>Automated concurrency test in CI.</b> The probe exists and passes, but it runs as a script rather than in
+      <code>npm test</code>, because it needs a live server and database. Wiring it into CI with a service Postgres is the
+      first thing I would add.</li>
+  <li><b>Notifying a promoted attendee</b> (email or SMS) and <b>real-time seat counts</b>. Both are visible on the next
+      refresh, and the capacity rule is enforced in the database either way, so these are polish rather than correctness.</li>
+  <li><b>Pagination, export and log retention</b> for the activity view and registration history. Correct at demo scale, and
+      the next step before the log covers years of entries.</li>
+  <li><b>Refresh tokens, revocation, login rate limiting</b>, and an accessibility audit. A single 1-day token and
+      keyboard-reachable controls are proportionate for an internal tool; a public product would want the full set.</li>
+</ul>
+
+<h2>7. What was verified, and what each check proves</h2>
+<table>
+  <tr><th style="width:32%">Check</th><th style="width:23%">Result</th><th>Proves</th></tr>
+  <tr>
+    <td><code>npm test</code> (Vitest, backend)</td>
+    <td><b>6 tests passing</b> (2 files)</td>
+    <td>Waitlist decision when a workshop is full; the row lock taken <i>before</i> the count and the insert; 404 for an unknown
+    workshop with no row written; double-cancel as a no-op that frees nothing and overwrites nothing; promotion of the oldest
+    waitlisted attendee.</td>
+  </tr>
+  <tr><td><code>npm run build</code></td><td>Compiles clean</td><td>The TypeScript in the submission type-checks end to end, so a reviewer's first command does not fail.</td></tr>
+  <tr><td><code>npm run lint</code> (oxlint)</td><td><b>0 warnings, 0 errors</b> (30 files)</td><td>No obvious mistakes or dead code left in <code>src/</code> and <code>test/</code>.</td></tr>
+  <tr><td>Concurrency probe &times; 3</td><td>10 simultaneous requests, capacity 1 &rarr; <b>1 ACTIVE / 9 WAITLISTED</b> every run</td><td>The capacity rule survives simultaneous requests &mdash; the one thing the brief says it cares about most.</td></tr>
+  <tr><td>Permission matrix over HTTP</td><td>403 for every role/action the brief marks "No"; 401 without a token</td><td>Access control is enforced by the API, not by the interface.</td></tr>
+  <tr><td>Waitlist round trip on the seeded full workshop</td><td>Register &rarr; <code>WAITLISTED</code>; cancel &rarr; promoted; cancelled row kept with actor and time</td><td>History and the waitlist bonus work together on real data, with no manual database edits.</td></tr>
+</table>
+
+<div class="foot">
+  <b>The reasoning in one sentence:</b> the stack was chosen so the two graded rules &mdash; who may do what, and never selling
+  the same seat twice &mdash; are each enforced in exactly one place (a role guard per route, a row lock per workshop), with
+  everything else kept as plain as possible so the project runs the first time somebody else tries it.
+</div>
+
+</body>
+</html>

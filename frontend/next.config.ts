@@ -16,6 +16,16 @@ const apiUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
 const onNetlify = Boolean(process.env.NETLIFY);
 
 if (onNetlify && (!apiUrl || /localhost|127\.0\.0\.1/.test(apiUrl))) {
+  /*
+   * Names only, never values: if the variable *is* configured but under a
+   * slightly different key (NEXT_PUBLIC_API_URI, NEXT_PUBLIC_APP_URL, ...),
+   * having the candidates in the log makes the typo obvious instead of
+   * sending you back to the dashboard to compare strings by eye.
+   */
+  const candidates = Object.keys(process.env)
+    .filter((key) => /NEXT_PUBLIC|API|BACKEND|RENDER/i.test(key))
+    .sort();
+
   throw new Error(
     [
       "",
@@ -28,7 +38,21 @@ if (onNetlify && (!apiUrl || /localhost|127\.0\.0\.1/.test(apiUrl))) {
       "   -> Add a variable -> NEXT_PUBLIC_API_URL",
       "      = https://<your-render-service>.onrender.com",
       "   Scopes: tick 'Builds' (a static export needs it at build time).",
+      "   Deploy contexts: 'All deploy contexts' (or at least Production -",
+      "   a value scoped to Deploy previews/Branch deploys is NOT used here).",
       " Then: Deploys -> Trigger deploy -> Clear cache and deploy site.",
+      "",
+      " Env var NAMES visible to this build that look related (values are",
+      " never printed) - if your variable shows up here under a different",
+      " spelling, rename it; if this list is empty, it never reached the",
+      " build (wrong project, missing 'Builds' scope, or a sensitive",
+      " variable stripped by the site's sensitive variable policy):",
+      candidates.length
+        ? candidates.slice(0, 30).map((key) => `   ${key}`).join("\n")
+        : "   (none)",
+      "",
+      " Verify what the build will actually see, then redeploy:",
+      "   npx netlify env:list --context production --scope builds --plain",
       "================================================================",
       "",
     ].join("\n"),

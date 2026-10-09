@@ -41,8 +41,9 @@ const HIGHLIGHTS = [
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("admin@test.com");
-  const [password, setPassword] = useState("admin123");
+  // Deliberately empty: the sign-in form must never ship seeded credentials.
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -180,11 +181,6 @@ export default function LoginPage() {
               {loading ? null : <ArrowRight size={16} />}
             </button>
           </form>
-
-          <div className="demo-box">
-            <strong>Seeded admin</strong>
-            <span>admin@test.com / admin123</span>
-          </div>
         </section>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkshopDto, UpdateWorkshopDto } from './dto/create-workshop.dto';
 
@@ -7,6 +7,20 @@ export class WorkshopsService {
   constructor(private prisma: PrismaService) {}
 
   async create(createWorkshopDto: CreateWorkshopDto, userId: string) {
+    /*
+     * `code` is unique. Without this check a duplicate code reached Prisma and
+     * came back as a bare "Internal server error" (500) - the manager filling in
+     * the form has no idea the code is taken. Checked explicitly so the API
+     * answers 409 with the offending code.
+     */
+    const duplicate = await this.prisma.workshop.findUnique({
+      where: { code: createWorkshopDto.code },
+      select: { id: true },
+    });
+    if (duplicate) {
+      throw new ConflictException(`Workshop code ${createWorkshopDto.code} is already in use`);
+    }
+
     const workshop = await this.prisma.workshop.create({
       data: {
         ...createWorkshopDto,

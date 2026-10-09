@@ -1,74 +1,159 @@
-# Workshop Registration Service - Project Status
+# Workshop Registration Service
+
+Workshop registration and capacity management for a small training centre: a manager publishes
+workshops, the front desk registers attendees and cancels them, and the system never sells the
+same seat twice. Built for the `FullStack_Challenge_WORKSHOP.pdf` brief.
 
 ## 🚀 OVERVIEW & STACK
-**Frontend**: Next.js (React) + Vanilla CSS (Developer Tool Aesthetic, Dark Mode)  
-**Backend**: NestJS + Prisma ORM (SQLite DB)  
 
-This document outlines the current progress against the requirements from the `FullStack_Challenge_WORKSHOP.pdf` brief, explicitly detailing what has been implemented so far and what remaining steps need to be completed.
+**Backend**: NestJS 12 + Prisma 6 + PostgreSQL (JWT auth, role guards, audit trail)  
+**Frontend**: Next.js 16 (React 19) + plain CSS — dark, developer-tool aesthetic, static export  
+
+| Where | What |
+| --- | --- |
+| `backend/` | NestJS API on `:3001` — auth, users, workshops, registrations, audit log |
+| `frontend/` | Next.js dashboard on `:3000` — overview, workshops, users, activity |
+| `docs/` | The two submitted PDFs plus the HTML sources they were rendered from |
+| `scripts/` | `concurrency-check.py` — the over-registration probe (see below) |
+
+## 📄 Documentation
+
+Both documents are committed as PDFs (and as HTML source, so they are diffable):
+
+| Document | Covers |
+| --- | --- |
+| [`docs/Local_Setup_Instructions.pdf`](docs/Local_Setup_Instructions.pdf) | Running the backend and the frontend locally: prerequisites, database options, environment variables, migrations, seeding, logins, troubleshooting |
+| [`docs/Technology_Choices_Design_and_Tradeoffs.pdf`](docs/Technology_Choices_Design_and_Tradeoffs.pdf) | Technology choices, design decisions, trade-offs, assumptions, and how over-registration is prevented (with measurements) |
+
+## ✅ What is implemented
+
+- **Roles & access control** — `ADMIN` creates accounts, `MANAGER` publishes/edits workshops,
+  `MANAGER` + `STAFF` register and cancel attendees. Enforced on the server by
+  `JwtAuthGuard` + `RolesGuard`; the UI only hides what a role cannot use.
+- **Capacity rule** — a workshop can never hold more active registrations than its capacity,
+  including when requests arrive simultaneously.
+- **Waitlist** — a full workshop puts the next attendee in a queue (`WAITLISTED`) and promotes
+  the oldest one automatically when a seat is freed.
+- **Permanent history** — cancelling never deletes a row: it records `status`,
+  `cancelledById` and `cancelledAt`, and frees the seat exactly once.
+- **Audit trail** — `AuditLog` rows for account creation, workshop create/edit, registration,
+  cancellation and waitlist promotion, with actor and timestamp.
+- **Filtering** — the overview filters by date range, workshop status and "seats available only".
+- **Seed data** — 3 users and 4 workshops (one full + waitlisted, one with a cancellation,
+  one completed) so every feature is demonstrable immediately. Re-running it is safe.
+
+## 🔐 Seeded logins
+
+| Role | Email | Password |
+| --- | --- | --- |
+| ADMIN | `admin@test.com` | `admin123` |
+| MANAGER | `manager@test.com` | `manager123` |
+| STAFF | `staff@test.com` | `staff123` |
+
+Development-only credentials. Create the ADMIN you need, then change or remove these before any
+real deployment, and set `JWT_SECRET` in the environment.
+
+
+## 🐞 Issues found and how they were solved
+
+Everything below was found while building the project and is fixed in the committed code.
+
+### 1. Over-registration - the race the client described
+
+The capacity check was a read-then-write: count the active registrations, then insert. Under
+PostgreSQL's default `READ COMMITTED` the `COUNT` takes no lock, so two simultaneous requests both
+read "0 of 1" and both inserted an `ACTIVE` row.
+
+**Measured:** a probe created a workshop with capacity 1 and fired 10 registrations at the same
+instant (all threads released by a `threading.Barrier`) - **7 rows ended up `ACTIVE`**. That is the
+client's "two of us promised the last seat at the same time", reproduced in a few milliseconds.
+
+**Fix:** lock the workshop row before counting, inside the same transaction:
+
+```ts
+// backend/src/registrations/registrations.service.ts - first statement in the transaction
+await tx.$queryRaw`SELECT id FROM "Workshop" WHERE id = ${workshopId} FOR UPDATE`;
+const activeCount = await tx.registration.count({ where: { workshopId, status: 'ACTIVE' } });
+```
+
+**After:** the same probe, run three times - **1 `ACTIVE` / 9 `WAITLISTED`** every time. Reproduce
+it with the API running and seeded:
+
+```bash
+python3 scripts/concurrency-check.py
+# RESULT: PASS - capacity respected
+```
+
+The cancel path was hardened in the same way:
+
+- the workshop row is locked **before** the registration status is re-read;
+- cancelling an already-cancelled registration is a **no-op** (before, it could free a second seat
+  and overwrite the original `cancelledById` / `cancelledAt`, losing who really cancelled it);
+- a waitlisted attendee is promoted **only if an `ACTIVE` seat was actually freed**, and only while
+  the count is still below capacity.
+
+### 2. Hardcoded JWT secret
+
+`'super-secret'` was hardcoded in the signing *and* the verifying code. Everything worked, which is
+exactly why it was dangerous: anyone who can read the repository could sign themselves an ADMIN
+token. Fixed with a single source of truth (`backend/src/auth/jwt.constants.ts`) that reads
+`JWT_SECRET` from the environment, keeping a development-only fallback so local runs stay easy.
+
+### 3. Validation gaps in the DTOs
+
+`role`, `status` and `capacity` accepted any value, and the update DTOs had no decorators at all, so
+`{"capacity": "many"}` reached Prisma and surfaced as a 500 instead of a 400. Fixed with shared
+`ROLES` / `WORKSHOP_STATUSES` constants, `@IsIn(...)`, `@IsInt() @Min(1)` and real decorators on the
+update DTOs.
+
+### 4. Duplicate workshop code answered 500
+
+Creating a workshop with an existing `code` returned "Internal server error". Now checked explicitly
+and answered with **409** and the offending code.
+
+### 5. This README described a different application
+
+It documented SQLite, a full workshop being *rejected* with `BadRequestException`, no waitlist and a
+single seeded user. Rewritten to match the code, with the longer explanations in `docs/`.
+
+### 6. `NEXT_PUBLIC_API_URL` missing on Netlify
+
+The static export then calls `http://localhost:3001`, so the deploy works on the developer's machine
+and is broken for everyone else. `frontend/next.config.ts` now fails the build with a clear message
+when the variable is missing or still points at localhost.
+
+### 7. Tests and checks
+
+```bash
+cd backend && npm test        # 6 tests: capacity rule, lock ordering, waitlist, double-cancel
+cd backend && npm run lint    # oxlint: 0 warnings, 0 errors
+cd backend && npm run build   # TypeScript type-checks clean
+```
 
 ---
 
-## ✅ WHAT HAS BEEN COMPLETED (DONE)
+## 💻 Running it locally
 
-### 1. Database & Schema Architecture
-- [x] **SQLite Database Setup**: Bootstrapped via Prisma for zero-friction local setup.
-- [x] **User Models**: Support for Admin, Manager, and Staff roles.
-- [x] **Workshop Models**: Tracking `code`, `title`, `instructor`, `date`, `capacity`, and `status`.
-- [x] **Registration Models**: Captures `attendeeName`, `attendeeEmail`, `status` (ACTIVE/CANCELLED). Includes fields for `createdById`, `cancelledById`, `createdAt`, and `cancelledAt` to maintain a permanent history as required.
-- [x] **Audit Trail (Bonus)**: Created an `AuditLog` table to record when workshops are edited or roles/accounts are created.
-- [x] **Seed Script**: Successfully seeds the first Admin account (`admin@test.com` / password: `admin123`).
+```bash
+# backend (terminal 1)
+cd backend && npm install && npx prisma generate
+# create .env next to package.json, then:
+npx prisma migrate deploy && npm run db:seed
+npm run start:dev                             # -> http://localhost:3001
 
-### 2. Backend Security & Role-Based Auth (RBAC)
-- [x] **JWT Authentication**: Implemented `passport-jwt` and `JwtAuthGuard` to protect all internal endpoints.
-- [x] **Strict Role Enforcement**: Built a `RolesGuard` and `@Roles()` decorator.
-  - *Admin*: Protected `/users` endpoint for creating new accounts.
-  - *Manager*: Protected `POST /workshops` and `PATCH /workshops/:id` for adding/editing workshops.
-  - *Manager/Staff*: Protected `/registrations` endpoints for registering and cancelling attendees.
+# frontend (terminal 2)
+cd frontend && npm install && npm run dev     # -> http://localhost:3000
+```
 
-### 3. Concurrency Safety (Over-Registration Prevention)
-- [x] **Capacity Logic**: Built a transactional lock within Prisma (`backend/src/registrations/registrations.service.ts`). 
-- [x] When a registration request arrives, the backend queries the workshop's *current active registrations count*. If the count equals or exceeds the capacity limit, it instantly rejects the request with a `BadRequestException` (`Workshop is full`). Because it executes within a Prisma `$transaction` on SQLite, race conditions are mitigated.
+`.env` for the backend needs `DATABASE_URL`, `DIRECT_URL` and `JWT_SECRET` (`PORT` defaults to
+3001). The frontend falls back to `http://localhost:3001` when `NEXT_PUBLIC_API_URL` is not set.
 
-### 4. Frontend Foundation
-- [x] **Next.js Foundation**: Established the app directory routing.
-- [x] **Developer-Tool Aesthetics**: Built a robust CSS variables system (`globals.css`) for strict spacing, dark mode, typography, button states, and shimmer skeleton loaders without using Tailwind.
-- [x] **API Client**: Implemented a generic `fetchApi` wrapper (`lib/api.ts`) that automatically handles JWT tokens stored in local storage.
-- [x] **Login Page UI**: Functional login flow at `/login` that connects to the backend and fetches the JWT.
-- [x] **Dashboard Scaffold**: A foundational dashboard on `/` that automatically loads and displays the workshops fetched from the API with skeleton loaders.
+Seeded logins: `admin@test.com` / `admin123`, `manager@test.com` / `manager123`,
+`staff@test.com` / `staff123`.
 
----
-
-## 🛠 WHAT STILL NEEDS TO BE DONE (TODO)
-
-While the backend is structurally complete and enforces all rules, the *Frontend UI* needs to be fully wired up to these endpoints to complete the end-to-end experience.
-
-### Step 1: Complete the UI Role Workflows
-- [ ] **Admin View (Account Creation)**: Add a modal/page for Admins to create new accounts for Managers and Staff. The backend endpoint `POST /users` is ready.
-- [ ] **Manager View (Workshop Management)**: Add a modal/page for Managers to create and edit workshops. The backend endpoints `POST /workshops` and `PATCH /workshops/:id` are ready.
-- [ ] **Registration Flow (Staff/Manager)**: Add the "Register Attendee" modal on the dashboard where Staff/Managers can input an attendee's Name & Email. Wire this to the `POST /registrations` endpoint.
-- [ ] **Cancellation Flow**: Add a "Cancel Registration" button next to attendees. Wire this to `PATCH /registrations/:id/cancel` which frees the seat but keeps the record.
-
-### Step 2: Implement Workshop Finding / Filtering
-- [ ] **Backend Filtering**: Update the `findAll()` method in `workshops.controller.ts` to accept Query parameters (e.g., `?dateRange=...&status=...&availableSeats=true`).
-- [ ] **Frontend Search**: Wire the dummy search inputs in `page.tsx` to pass these query parameters and filter the workshop list down without scrolling.
-
-### Step 3: Polish Registration History & Views
-- [ ] **Attendee List UI**: Create an interface (perhaps an accordion or a separate route `/workshops/:id`) to display all attendees for a workshop, distinguishing between ACTIVE and CANCELLED registrations, and showing exactly which Staff member created/cancelled them.
-
-### Step 4: Add "Waitlist" (Optional Bonus)
-- [ ] Create a `WAITLISTED` status. Update the Prisma transaction to queue users into a waitlist when capacity is reached, and automatically promote them when a cancellation occurs.
-
----
-
-## 💻 RUNNING THE PROJECT locally
-
-The servers are already running in your terminal:
-1. **Frontend**: `http://localhost:3000` (or `3002`/`3003` depending on port availability - check your active terminal tab)
-2. **Backend**: `http://localhost:3001`
-
-**Login Credentials**:
-- **Email**: `admin@test.com`
-- **Password**: `admin123`
+Full instructions - the three ways to get a PostgreSQL database, every environment variable,
+migrations, seeding, the click-through smoke test and troubleshooting - are in
+[`docs/Local_Setup_Instructions.pdf`](docs/Local_Setup_Instructions.pdf).
 
 ---
 
@@ -119,6 +204,33 @@ database.
 5. Your API is at `https://workshop-registration-api.onrender.com` (the `name` in `render.yaml`).
    Verify: `curl https://workshop-registration-api.onrender.com/health`.
 
+> #### How to find your Render URL (don't guess it)
+>
+> Render derives the subdomain from the service **name**, and appends a short suffix when that name is
+> already taken by another Render user — so `workshop-registration-api.onrender.com` is the *expected*
+> URL, not a guaranteed one. Read the real value from one of these:
+>
+> 1. **Dashboard (easiest)** — open the service at dashboard.render.com: the `*.onrender.com` URL is shown
+>    at the top of the service page (clickable). Use it verbatim.
+> 2. **Deploy log** — service → **Logs**: the build output ends with the URL of the live service; grep the
+>    log for `onrender.com`.
+> 3. **CLI / REST API** — from your machine:
+>
+>    ```bash
+>    brew install render && render login          # or: export RENDER_API_KEY=rnd_...
+>    render services -o json | grep -o '"url":"[^"]*"' | sort -u
+>
+>    # or straight from the REST API:
+>    curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
+>      'https://api.render.com/v1/services?limit=100' | grep -o '"url":"[^"]*"' | sort -u
+>    ```
+>
+>    In the API response the public URL is `service.serviceDetails.url`; `service.dashboardUrl` is the link
+>    back to the dashboard. (API keys: Render Dashboard → **Account Settings → API Keys**.)
+>
+> Copy that exact URL — it is the `NEXT_PUBLIC_API_URL` value in Step 4 and the origin for `CORS_ORIGIN`.
+> No trailing slash. Renaming the service later changes the URL, so update Netlify + `CORS_ORIGIN` if you do.
+
 ### Step 3 — Seed the admin user (once, from your machine)
 
 Render's free tier has no Shell, so seed locally against Neon. Use the **direct** string for both
@@ -130,8 +242,9 @@ DATABASE_URL="<neon direct url>" DIRECT_URL="<neon direct url>" npm run db:seed
 # → Seeded Admin: admin@test.com
 ```
 
-The seed `upsert`s, so re-running it is safe. Log in with `admin@test.com` / `admin123`
-(`backend/prisma/seed.ts`).
+The seed `upsert`s, so re-running it is safe. It creates three accounts
+(`backend/prisma/seed.ts`): `admin@test.com` / `admin123`, `manager@test.com` / `manager123` and
+`staff@test.com` / `staff123` (dev-only).
 
 ### Step 4 — Netlify (frontend)
 
@@ -197,6 +310,39 @@ If the variable is missing or still points at localhost during a build that runs
 bundle cannot reach production by accident. Local builds are unaffected — they read
 `frontend/.env.local` (which keeps `http://localhost:3001` for your local backend).
 
+<details>
+<summary><b>Troubleshooting: <code>Current value: (not set at all)</code></b></summary>
+
+That message means the build process really had no `NEXT_PUBLIC_API_URL` in its environment. The guard
+also lists the names of every env var it *can* see that looks related, which usually identifies the
+problem in one line:
+
+| Log says | Cause | Fix |
+| --- | --- | --- |
+| A near-miss name, e.g. `NEXT_PUBLIC_API_URI` | Key typo (or an old name) | Rename/delete it so the key is exactly `NEXT_PUBLIC_API_URL` |
+| `(none)` | The variable never reached this build | See the three causes below |
+
+1. **Scope does not include Builds.** Netlify variables have scopes (`Builds`, `Functions`, `Runtime`)
+   *and* per-deploy-context values; a variable ticked only for Functions/Runtime is simply not exported
+   to `npm run build`. Tick **Builds**.
+2. **Wrong deploy context.** A value saved for *Deploy previews* or *Branch deploys* is not used by a
+   production deploy. Choose **All deploy contexts** (or set it for **Production**).
+3. **Different project / never saved / sensitive policy.** The variable may live on another Netlify
+   site (or team-level *shared* variables), the "Add a variable" form may never have been saved, or a
+   variable marked **Contains secret values** was stripped because the deploy was untrusted under the
+   site's *Sensitive variable policy*. `NEXT_PUBLIC_API_URL` is public — don't mark it secret.
+
+Verify what the build will actually receive, then redeploy (clear cache):
+
+```bash
+npx netlify-cli env:list --context production --scope builds --plain  # what a production build gets
+npx netlify-cli env:get NEXT_PUBLIC_API_URL --context production      # resolves netlify.toml too
+npx netlify-cli env:set NEXT_PUBLIC_API_URL "https://<service>.onrender.com" \
+  --scope builds --context production                                 # or just fix it in the UI
+```
+
+</details>
+
 *Alternative to the UI:* because the URL is public anyway, you may instead commit it as
 `NEXT_PUBLIC_API_URL = "https://<service>.onrender.com"` inside `[build.environment]` in `netlify.toml`.
 Never put real secrets there — that file is in git.
@@ -222,9 +368,13 @@ Common pitfalls that produce Netlify's "Page not found":
 
 ### Step 5 — Post-deploy smoke test
 
-```bash
-API=https://workshop-registration-api.onrender.com
+Free web services sleep after 15 minutes without traffic and need ~1 minute to wake, so the first
+request can hang — `--max-time 90` on the first call covers the cold start.
 
+```bash
+API=https://workshop-registration-api.onrender.com   # exact URL from Step 2 above
+
+curl -s --max-time 90 -o /dev/null -w 'warm-up: %{http_code}\n' "$API/health"
 curl -s "$API/health"                       # {"status":"ok"}
 curl -s -o /dev/null -w '%{http_code}\n' "$API/users"   # 401 - JWT guard is active
 
