@@ -1,0 +1,62 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  role      String   // ADMIN, MANAGER, STAFF
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  createdRegistrations   Registration[] @relation("CreatedRegistrations")
+  cancelledRegistrations Registration[] @relation("CancelledRegistrations")
+}
+
+model Workshop {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  title       String
+  instructor  String
+  date        DateTime
+  capacity    Int
+  status      String   @default("SCHEDULED") // SCHEDULED, COMPLETED, CANCELLED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  registrations Registration[]
+}
+
+model Registration {
+  id            String   @id @default(uuid())
+  workshopId    String
+  workshop      Workshop @relation(fields: [workshopId], references: [id])
+  attendeeName  String
+  attendeeEmail String
+  status        String   @default("ACTIVE") // ACTIVE, WAITLISTED, CANCELLED
+  
+  createdById   String?
+  createdBy     User?    @relation("CreatedRegistrations", fields: [createdById], references: [id])
+  
+  cancelledById String?
+  cancelledBy   User?    @relation("CancelledRegistrations", fields: [cancelledById], references: [id])
+  
+  createdAt     DateTime @default(now())
+  cancelledAt   DateTime?
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  action    String
+  entity    String
+  entityId  String
+  details   String   // JSON stringified
+  createdAt DateTime @default(now())
+}
