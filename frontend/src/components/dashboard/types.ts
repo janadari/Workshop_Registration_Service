@@ -68,8 +68,25 @@ export type UserPayload = {
   role: Role;
 };
 
-export function bookedSeats(workshop: { _count?: { registrations: number } }) {
-  return workshop._count?.registrations ?? 0;
+/*
+ * Seat maths.
+ *
+ * Two shapes reach these helpers: list rows carry `_count.registrations`
+ * (already filtered to ACTIVE by the API) while the detail response carries the
+ * full `registrations` array, cancelled history included. Counting that raw
+ * array would over-report bookings, so the fallback below filters on status; the
+ * `_count` branch is preferred whenever it is present because the database does
+ * the counting. Without the fallback a response that omits `_count` silently
+ * reported an empty workshop (full capacity "left", 0% fill rate).
+ */
+export function bookedSeats(workshop: {
+  _count?: { registrations: number };
+  registrations?: { status: string }[];
+}) {
+  if (typeof workshop._count?.registrations === "number") {
+    return workshop._count.registrations;
+  }
+  return workshop.registrations?.filter((entry) => entry.status === "ACTIVE").length ?? 0;
 }
 
 export function seatsLeft(workshop: Workshop) {

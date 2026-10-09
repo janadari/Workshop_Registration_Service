@@ -56,6 +56,20 @@ export class WorkshopsService {
     return this.prisma.workshop.findUnique({
       where: { id },
       include: {
+        /*
+         * The manage-workshop panel renders "booked / seats left" with the same
+         * helpers the catalogue uses (frontend .../dashboard/types.ts ->
+         * bookedSeats), which read `_count.registrations`. This include was
+         * missing from the detail response, so `_count` was `undefined` there and
+         * the panel treated every workshop as empty: capacity 20 with 3 ACTIVE
+         * registrations showed "20 seats left" and a 0% meter, and re-fetching
+         * after a registration redisplayed the same wrong numbers (only the
+         * attendee list looked updated). Filtered to ACTIVE exactly like
+         * findAll() so the list and the detail panel always agree.
+         */
+        _count: {
+          select: { registrations: { where: { status: 'ACTIVE' } } }
+        },
         registrations: {
           orderBy: { createdAt: 'desc' },
           include: {
