@@ -35,6 +35,16 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  # NEXT_PUBLIC_API_URL is deliberately NOT set here - it is the per-site Render
+  # URL, so it belongs in the Netlify UI (Project configuration ->
+  # Environment variables, scope "Builds"). See README "Step 4".
+  # Since the value is public (it gets inlined into the bundle) you *may* commit
+  # it here instead, but never put real secrets in this file - it is in git.
+  #
+  # frontend/next.config.ts fails the build on Netlify (NETLIFY=true) when that
+  # variable is missing or still points at localhost, and otherwise logs the
+  # value it baked, so the deploy log always shows which API it targets.
+
   # Netlify auto-installs its Next.js adapter (OpenNext) when it detects Next.js.
   # For `output: "export"` the adapter only copies ./out into the publish
   # directory, which is exactly what we do - see docs.opennext.js.org/netlify.

@@ -149,16 +149,57 @@ Build settings (both `netlify.toml` and the UI must agree — `netlify.toml` win
 | Publish directory | `out` |
 | Functions directory | *(leave empty)* |
 
-Environment variable (**must be set before the build** — `NEXT_PUBLIC_*` values are inlined into the JS
-bundle at build time, see `frontend/.env.example`):
+#### The one environment variable you must add
 
-```
-NEXT_PUBLIC_API_URL = https://<your-render-service>.onrender.com
+| Item | Value |
+| --- | --- |
+| Where | Netlify → **Project configuration → Environment variables → Add a variable** |
+| Key | `NEXT_PUBLIC_API_URL` |
+| Value | `https://<your-render-service>.onrender.com` (no trailing slash, no `/api`) |
+| Scopes | tick **Builds** only (a static export needs it while building, not at runtime) |
+
+(The classic UI calls this **Site settings → Build & deploy → Environment**.) Copy the URL from the Render
+dashboard — the top of the service page shows **Your service URL**. `render.yaml` requests the name
+`workshop-registration-api`, but Render appends a short suffix if that name is already taken, so trust the
+dashboard value.
+
+**Why it must be set *before* the build:** `NEXT_PUBLIC_*` values are inlined into the JS bundle by
+`next build` — `frontend/src/lib/api.ts` reads it and otherwise falls back to `http://localhost:3001`. A
+deploy built without it can only reach a backend running on the *visitor's* own machine, which is exactly
+why the site looks fine while your laptop is serving the API.
+
+Then **Deploys → Trigger deploy → Clear cache and deploy site**. Saving the variable alone changes nothing
+on the live site: the value is baked into the files at build time.
+
+**How to see whether it worked** (any of these):
+
+```bash
+# 1) The Netlify deploy log prints the value it baked, as the first [next.config] line:
+#    [next.config] API base URL baked into this bundle: https://<service>.onrender.com
+
+# 2) Grep the live bundle for the URL
+SITE=https://<your-site>.netlify.app
+for f in $(curl -sL "$SITE"/ | grep -oE '/_next/static/chunks/[^"]+\.js' | sort -u); do
+  curl -s "$SITE$f" | grep -q 'onrender.com'    && echo "OK   $f"
+  curl -s "$SITE$f" | grep -q 'localhost:3001'  && echo "BAD, localhost baked in: $f"
+done
+
+# 3) List the variables Netlify stores for the site (secret values shown, so treat with care)
+npx netlify-cli login && npx netlify-cli link   # pick the existing site once
+npx netlify-cli env:list                        # key + value + scopes
 ```
 
-Then: **Deploys → Trigger deploy → Clear cache and deploy site**. Whenever the API URL changes you must
-update this variable *and* redeploy — the value is baked into the JS bundle, so changing it alone does
-nothing until the site is rebuilt.
+In the browser: **F12 → Network → click any login/API request → Request URL** must point at
+`<service>.onrender.com`.
+
+If the variable is missing or still points at localhost during a build that runs on Netlify,
+`frontend/next.config.ts` **fails that build on purpose** and prints the value it saw, so a localhost
+bundle cannot reach production by accident. Local builds are unaffected — they read
+`frontend/.env.local` (which keeps `http://localhost:3001` for your local backend).
+
+*Alternative to the UI:* because the URL is public anyway, you may instead commit it as
+`NEXT_PUBLIC_API_URL = "https://<service>.onrender.com"` inside `[build.environment]` in `netlify.toml`.
+Never put real secrets there — that file is in git.
 
 Common pitfalls that produce Netlify's "Page not found":
 
@@ -169,7 +210,10 @@ Common pitfalls that produce Netlify's "Page not found":
   first, then the base directory, then the repo root; leaving it empty means the committed
   `netlify.toml` at the repo root is always used.
 - **Missing `NEXT_PUBLIC_API_URL`** during the build — the site loads but every API call hits
-  `http://localhost:3001`.
+  `http://localhost:3001`. Since this repo guards against that, the Netlify build now fails with
+  `Netlify build stopped: NEXT_PUBLIC_API_URL is not usable`; add the variable and clear-cache-redeploy.
+- **Variable saved but the site unchanged** — `NEXT_PUBLIC_*` is inlined at build time, so you must
+  trigger a new deploy (Clear cache and deploy site) for it to take effect.
 - **Cold starts** — Render free instances spin down after ~15 minutes of inactivity; the next request
   takes 30–60 s and the UI may briefly show "Unable to reach the server". Warm the API up with
   `curl https://<api>/health` before a demo.

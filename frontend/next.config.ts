@@ -1,5 +1,48 @@
 import type { NextConfig } from "next";
 
+/*
+ * Netlify guard: `NEXT_PUBLIC_API_URL` is inlined into the JS bundle at build
+ * time (see frontend/src/lib/api.ts, which falls back to http://localhost:3001
+ * when the variable is absent). A Netlify build that runs without it therefore
+ * ships a site that can only reach a backend running on the visitor's own
+ * machine - which is exactly how a deploy ends up "working" on the developer's
+ * laptop and nowhere else.
+ *
+ * Netlify sets NETLIFY=true in its build environment, so on Netlify we refuse to
+ * build with a missing/localhost value and print the value we did use. Local
+ * `npm run build` (which reads frontend/.env.local) is unaffected.
+ */
+const apiUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+const onNetlify = Boolean(process.env.NETLIFY);
+
+if (onNetlify && (!apiUrl || /localhost|127\.0\.0\.1/.test(apiUrl))) {
+  throw new Error(
+    [
+      "",
+      "================================================================",
+      " Netlify build stopped: NEXT_PUBLIC_API_URL is not usable",
+      ` Current value: ${apiUrl ? `"${apiUrl}"` : "(not set at all)"}`,
+      "",
+      " Fix it once, here:",
+      "   Netlify -> Project configuration -> Environment variables",
+      "   -> Add a variable -> NEXT_PUBLIC_API_URL",
+      "      = https://<your-render-service>.onrender.com",
+      "   Scopes: tick 'Builds' (a static export needs it at build time).",
+      " Then: Deploys -> Trigger deploy -> Clear cache and deploy site.",
+      "================================================================",
+      "",
+    ].join("\n"),
+  );
+}
+
+if (apiUrl) {
+  console.log(`[next.config] API base URL baked into this bundle: ${apiUrl}`);
+} else {
+  console.log(
+    "[next.config] NEXT_PUBLIC_API_URL is not set - the bundle will call http://localhost:3001 (local dev only).",
+  );
+}
+
 const nextConfig: NextConfig = {
   /*
    * Static export (`next build` -> ./out).
