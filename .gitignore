@@ -31,3 +31,8 @@ build/
 # Prisma
 *.db
 *.db-journal
+
+# Environment variables
+.env
+.env.*
+!.env.example
