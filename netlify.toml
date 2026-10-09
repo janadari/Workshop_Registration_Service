@@ -1,0 +1,14 @@
+# Netlify configuration for the Next.js frontend.
+# This is a monorepo: the Next.js app lives in ./frontend (there is no
+# package.json at the repo root), so we set `base = "frontend"`.
+# Docs: https://docs.netlify.com/build/configure-builds/file-based-configuration/
+#
+# Values here OVERRIDE the Netlify UI build settings.
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"

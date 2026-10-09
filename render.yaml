@@ -1,0 +1,30 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Deploys the NestJS backend (./backend) as a FREE Render web service.
+# The Postgres database is hosted on Neon (free tier); provide its connection
+# strings via the Render dashboard when prompted (they are marked `sync: false`).
+#
+# Usage: Render Dashboard -> New -> Blueprint -> pick this repo.
+services:
+  - type: web
+    name: workshop-registration-api
+    runtime: node
+    plan: free
+    region: oregon # change to the region closest to you (oregon, ohio, virginia, frankfurt, singapore)
+    rootDir: backend
+    buildCommand: npm ci && npx prisma generate && npm run build
+    startCommand: npx prisma migrate deploy && node dist/main
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Neon POOLED connection string (host contains "-pooler") — set in dashboard.
+      - key: DATABASE_URL
+        sync: false
+      # Neon DIRECT connection string — used by `prisma migrate deploy`.
+      - key: DIRECT_URL
+        sync: false
+      # Signing secret for JWTs — Render generates a strong value automatically.
+      - key: JWT_SECRET
+        generateValue: true
