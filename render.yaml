@@ -10,11 +10,21 @@ services:
     name: workshop-registration-api
     runtime: node
     plan: free
-    region: oregon # change to the region closest to you (oregon, ohio, virginia, frankfurt, singapore)
+    # Pick the region closest to you AND to your Neon database (Neon's
+    # "Singapore (ap-southeast-1)" pairs with Render's "singapore"):
+    # oregon | ohio | virginia | frankfurt | singapore
+    region: singapore
     rootDir: backend
-    buildCommand: npm ci && npx prisma generate && npm run build
+    # `--include=dev` keeps the build working even if NODE_ENV=production is set
+    # in the dashboard: `nest build` needs the @nestjs/cli + typescript devDeps,
+    # and the start command needs the `prisma` CLI. (Render itself only sets
+    # NODE_ENV=production at runtime, never at build time.)
+    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+    # `prisma migrate deploy` applies backend/prisma/migrations to Neon on every
+    # boot (idempotent) using DIRECT_URL, so the schema is created without ever
+    # needing a Shell on the free plan.
     startCommand: npx prisma migrate deploy && node dist/main
-    healthCheckPath: /
+    healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
